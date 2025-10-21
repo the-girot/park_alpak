@@ -10,20 +10,15 @@ load_dotenv()
 
 
 def get_config() -> Config:
-    SECRET_KEY: str = os.environ.get("SECRET_KEY")
-    ALGORITHM: str = os.environ.get("ALGORITHM")
-    KEY: str = os.environ.get("KEY")
-
     db_host: str = os.environ.get("DB_HOST")
     db_name: str = os.environ.get("DB_NAME")
     db_user: str = os.environ.get("DB_USER")
     db_pass: str = os.environ.get("DB_PASS")
     db_port: str = os.environ.get("DB_PORT")
 
+    logger_db_name: str = os.environ.get("logger_db_name")
+
     return Config(
-        KEY=KEY,
-        SECRET_KEY=SECRET_KEY,
-        ALGORITHM=ALGORITHM,
         db_config=DbConfig(
             db_host=db_host,
             db_name=db_name,
@@ -34,7 +29,7 @@ def get_config() -> Config:
         logger_config=PostgresLoggerConfig(
             host=db_host,
             port=db_port,
-            database=db_name,
+            database=logger_db_name,
             username=db_user,
             password=db_pass,
             table_name="app_logs",
