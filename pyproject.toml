@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "fsspec>=2025.9.0",
+    "numpy>=2.3.4",
     "google-api-python-client>=2.185.0",
     "google-auth>=2.41.1",
     "google-auth-httplib2>=0.2.0",
@@ -15,6 +16,7 @@ dependencies = [
     "pandas>=2.3.2",
     "psutil>=7.1.0",
     "psycopg2>=2.9.10",
+    "psycopg2-binary>=2.9.11",
     "pydantic>=2.12.3",
     "python-dotenv>=1.1.1",
     "requests>=2.32.5",

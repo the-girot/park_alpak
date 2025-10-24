@@ -10,7 +10,7 @@ class DAG:
         self.schedule_interval = schedule_interval
         self.tasks = []
         self.last_run = None
-        self.next_run = None  # Следующее запланированное время запуска
+        self.next_run = None
         self.cron_schedule = None
 
         if schedule_interval and self._is_cron_string(schedule_interval):
@@ -26,7 +26,6 @@ class DAG:
         """Проверяет, является ли строка cron-выражением"""
         if not isinstance(schedule_str, str):
             return False
-        # Поддержка 5-ти и 6-ти полного формата (с секундами)
         parts = schedule_str.strip().split()
         return len(parts) in [5, 6] and all(self._is_cron_part(part) for part in parts)
 
@@ -41,65 +40,41 @@ class DAG:
         return func
 
     def _calculate_next_run(self, current_time):
-        """Вычисляет следующее время запуска на основе cron-расписания"""
-        if not self.cron_schedule:
-            return None
-
-        # Начинаем с текущей минуты + 1 секунда (чтобы не запускать сразу же)
+        """Резервный алгоритм с оптимизированными итерациями"""
         next_time = current_time.replace(microsecond=0) + timedelta(seconds=1)
 
-        max_iterations = 10000  # Защита от бесконечного цикла
-        iterations = 0
+        # Группируем итерации по дням для больших интервалов
+        days_checked = 0
+        max_days = 366
 
-        while iterations < max_iterations:
-            iterations += 1
+        while days_checked < max_days:
+            # Проверяем день месяца и месяц
+            if (
+                next_time.day in self.cron_schedule["day"]
+                and next_time.month in self.cron_schedule["month"]
+                and next_time.weekday() in self.cron_schedule["day_of_week"]
+            ):
+                # Внутри дня ищем подходящее время
+                for hour in sorted(self.cron_schedule["hour"]):
+                    if hour < next_time.hour:
+                        continue
+                    for minute in sorted(self.cron_schedule["minute"]):
+                        if hour == next_time.hour and minute < next_time.minute:
+                            continue
+                        for second in sorted(self.cron_schedule.get("second", [0])):
+                            candidate = next_time.replace(
+                                hour=hour, minute=minute, second=second
+                            )
+                            if candidate > current_time:
+                                return candidate
 
-            # Проверяем, подходит ли текущее кандидат-время
-            if self._time_matches_cron(next_time):
-                # Убеждаемся, что время в будущем
-                if next_time > current_time:
-                    return next_time
-                else:
-                    # Если время в прошлом, ищем следующее
-                    next_time += timedelta(minutes=1)
-                    continue
+            # Переходим к следующему дню
+            next_time = next_time.replace(
+                hour=0, minute=0, second=0, microsecond=0
+            ) + timedelta(days=1)
+            days_checked += 1
 
-            # Если время не подходит, переходим к следующей минуте
-            next_time += timedelta(minutes=1)
-            # Сбрасываем секунды
-            next_time = next_time.replace(second=0)
-
-        print(f"⚠️  Не удалось вычислить следующее время запуска для DAG {self.dag_id}")
-        return None
-
-    def _time_matches_cron(self, time):
-        """Проверяет, соответствует ли время cron-расписанию"""
-        if not self.cron_schedule:
-            return False
-
-        return (
-            time.second in self.cron_schedule.get("second", [0])
-            and time.minute in self.cron_schedule["minute"]
-            and time.hour in self.cron_schedule["hour"]
-            and time.day in self.cron_schedule["day"]
-            and time.month in self.cron_schedule["month"]
-            and time.weekday() in self.cron_schedule["day_of_week"]
-        )
-
-    def _get_next_run_simple(self, current_time):
-        """Простая версия вычисления следующего времени (для тестирования)"""
-        if not self.cron_schedule:
-            return None
-
-        # Начинаем с текущего времени
-        next_time = current_time.replace(microsecond=0)
-
-        while True:
-            next_time += timedelta(minutes=1)
-            next_time = next_time.replace(second=0)
-
-            if self._time_matches_cron(next_time):
-                return next_time
+        raise ValueError(f"Не удалось найти следующее время запуска за {max_days} дней")
 
     def should_run(self, current_time):
         """Определяет, нужно ли запускать DAG на основе следующего времени"""
