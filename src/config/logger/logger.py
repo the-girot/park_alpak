@@ -1,7 +1,7 @@
 # postgres_logger.py
-import logging
+from typing import Dict
 
-from .src.handler import ErrorFileHandler, PostgresHandler
+from .src.handler import ErrorFileHandler, Logger, PostgresHandler
 from .src.schema import PostgresLoggerConfig
 
 
@@ -11,47 +11,19 @@ class PostgresLogger:
     def __init__(self, config: PostgresLoggerConfig):
         self.config = config
         self.error_handler = ErrorFileHandler(config)
-        self.handler = None
-        self._setup_logger()
+        self.handler = PostgresHandler(config, self.error_handler)
+        self._loggers: Dict[str, Logger] = {}
 
-    def _setup_logger(self):
-        """Настройка логгера"""
-        try:
-            self.handler = PostgresHandler(self.config, self.error_handler)
-            self.handler.setLevel(self.config.min_level)
-
-            # Форматтер для консольного вывода (опционально)
-            formatter = logging.Formatter(
-                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-            )
-            self.handler.setFormatter(formatter)
-
-        except Exception:
-            self.error_handler.log_error("Ошибка при настройке логгера", exc_info=True)
-            raise
-
-    def get_logger(self, name: str = None) -> logging.Logger:
+    def get_logger(self, name: str = "root") -> Logger:
         """Получение логгера с указанным именем"""
-        try:
-            logger = logging.getLogger(name)
-            logger.setLevel(self.config.min_level)
-
-            # Убираем дублирующиеся обработчики
-            if not any(isinstance(h, PostgresHandler) for h in logger.handlers):
-                logger.addHandler(self.handler)
-
-            return logger
-        except Exception:
-            self.error_handler.log_error(
-                f"Ошибка при создании логгера {name}", exc_info=True
-            )
-            # Возвращаем базовый логгер в случае ошибки
-            return logging.getLogger(name)
+        if name not in self._loggers:
+            self._loggers[name] = Logger(name, self.handler)
+        return self._loggers[name]
 
     def close(self):
         """Закрытие логгера"""
         try:
             if self.handler:
                 self.handler.close()
-        except Exception:
-            self.error_handler.log_error("Ошибка при закрытии логгера", exc_info=True)
+        except Exception as e:
+            self.error_handler.log_error("Ошибка при закрытии логгера", exc_info=e)

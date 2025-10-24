@@ -18,8 +18,5 @@ class DbConfig(BaseModel):
 
 
 class Config(BaseModel):
-    SECRET_KEY: str
-    ALGORITHM: str
-    KEY: str
     db_config: DbConfig
     logger_config: PostgresLoggerConfig
