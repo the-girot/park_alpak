@@ -4,10 +4,13 @@ import threading
 import time
 import tracemalloc
 import weakref
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 
 import psutil
+
+from src.config import logger
 
 from .dag import DAG
 
@@ -18,8 +21,16 @@ class Croner:
         self.dags = {}  # Может накапливаться
         self.running = False
         self.active_threads = weakref.WeakSet()  # Следим за активными потоками
+        self.dag_queue = deque()  # Очередь DAG ожидающих выполнения
+        self.queue_lock = threading.Lock()  # Блокировка для работы с очередью
         self.last_cleanup = datetime.now()
         self.memory_usage_log = []
+
+        # Настройки параллелизма
+        self.max_concurrent_dags = 5
+        self.available_slots = threading.Semaphore(
+            self.max_concurrent_dags
+        )  # Семафор для ограничения параллелизма
 
         # Для мониторинга памяти
         tracemalloc.start()
@@ -40,9 +51,9 @@ class Croner:
 
             # Если файл изменился или DAG еще не загружен, загружаем/перезагружаем
             if existing_dag_id is None:
-                print(f"🆕 Найден новый DAG файл: {file_path}")
+                logger.info(f"🆕 Найден новый DAG файл: {file_path}")
             elif current_mtime > self.dags[existing_dag_id].get("mtime", 0):
-                print(f"🔄 Файл {file_path} изменился, перезагружаем DAG")
+                logger.warning(f"🔄 Файл {file_path} изменился, перезагружаем DAG")
                 # Удаляем старый DAG
                 del self.dags[existing_dag_id]
             else:
@@ -67,7 +78,7 @@ class Croner:
                         "loaded_at": datetime.now(),
                     }
                     loaded_dags.append(dag_id)
-                    print(
+                    logger.info(
                         f"✅ Загружен DAG: {dag_id} с расписанием: {attr.schedule_interval}"
                     )
 
@@ -104,13 +115,13 @@ class Croner:
             self.unload_dag(dag_id)
 
         if dags_to_remove:
-            print(f"Удалены DAG: {dags_to_remove}")
+            logger.warning(f"Удалены DAG: {dags_to_remove}")
 
     def scan_dags_folder(self):
         """Сканирует папку с DAG и загружает новые с контролем памяти"""
         if not self.dags_folder.exists():
             self.dags_folder.mkdir(parents=True)
-            print(f"Создана папка для DAG: {self.dags_folder}")
+            logger.info(f"Создана папка для DAG: {self.dags_folder}")
             return
 
         # Очищаем удаленные DAG
@@ -122,45 +133,76 @@ class Croner:
 
             dag_key = str(file_path)
             if dag_key not in [info["file_path"] for info in self.dags.values()]:
-                print(f"Найден новый DAG файл: {file_path}")
+                logger.info(f"Найден новый DAG файл: {file_path}")
                 self.load_dag_from_file(file_path)
 
     def run_dag_in_thread(self, dag_id, dag: DAG):
         """Запускает DAG в отдельном потоке с контролем ресурсов"""
         try:
-            print(f"Запуск DAG: {dag_id}")
+            logger.info(f"Запуск DAG: {dag_id}")
             dag.run()
         except Exception as e:
-            print(f"Ошибка при выполнении DAG {dag_id}: {e}")
+            logger.critical(f"Ошибка при выполнении DAG {dag_id}: {e}")
         finally:
-            # Убираем поток из отслеживания когда завершится
+            # Освобождаем слот и убираем поток из отслеживания
+            self.available_slots.release()
             if threading.current_thread() in self.active_threads:
                 self.active_threads.remove(threading.current_thread())
 
-    def run_scheduled_dags(self):
-        """Запускает DAG по расписанию с ограничением параллелизма"""
-        current_time = datetime.now()
+            # Проверяем очередь после завершения DAG
+            self.process_queue()
 
-        # Ограничиваем количество одновременно выполняющихся DAG
-        active_count = sum(1 for t in self.active_threads if t.is_alive())
-        max_concurrent = 5  # Максимум 5 параллельных DAG
+    def add_dag_to_queue(self, dag_id, dag: DAG):
+        """Добавляет DAG в очередь на выполнение"""
+        with self.queue_lock:
+            # Проверяем, нет ли уже этого DAG в очереди
+            for queued_dag_id, _ in self.dag_queue:
+                if queued_dag_id == dag_id:
+                    logger.info(f"DAG {dag_id} уже в очереди, пропускаем дублирование")
+                    return
 
-        for dag_id, dag_info in self.dags.items():
-            dag: DAG = dag_info["dag"]
+            self.dag_queue.append((dag_id, dag))
+            logger.info(
+                f"DAG {dag_id} добавлен в очередь. Размер очереди: {len(self.dag_queue)}"
+            )
 
-            if active_count >= max_concurrent:
-                print(
-                    f"Достигнут лимит параллельных DAG ({max_concurrent}), пропускаем {dag_id}"
+    def process_queue(self):
+        """Обрабатывает очередь DAG, запуская их при наличии свободных слотов"""
+        with self.queue_lock:
+            while self.dag_queue and self.available_slots.acquire(blocking=False):
+                dag_id, dag = self.dag_queue.popleft()
+                logger.info(
+                    f"Запуск DAG {dag_id} из очереди. Осталось в очереди: {len(self.dag_queue)}"
                 )
-                continue
-            if dag.should_run(current_time):
-                print(f"Запланирован запуск DAG: {dag_id}")
+
                 thread = threading.Thread(
                     target=self.run_dag_in_thread, args=(dag_id, dag), daemon=True
                 )
                 self.active_threads.add(thread)
                 thread.start()
-                active_count += 1
+
+    def run_scheduled_dags(self):
+        """Запускает DAG по расписанию с использованием очереди"""
+        current_time = datetime.now()
+
+        for dag_id, dag_info in self.dags.items():
+            dag: DAG = dag_info["dag"]
+
+            if dag.should_run(current_time):
+                # Пытаемся запустить сразу если есть свободные слоты
+                if self.available_slots.acquire(blocking=False):
+                    logger.info(f"Немедленный запуск DAG: {dag_id}")
+                    thread = threading.Thread(
+                        target=self.run_dag_in_thread, args=(dag_id, dag), daemon=True
+                    )
+                    self.active_threads.add(thread)
+                    thread.start()
+                else:
+                    # Если нет свободных слотов, добавляем в очередь
+                    logger.info(
+                        f"Свободных слотов нет, добавляем DAG {dag_id} в очередь"
+                    )
+                    self.add_dag_to_queue(dag_id, dag)
 
     def monitor_memory_usage(self):
         """Мониторинг использования памяти"""
@@ -174,6 +216,8 @@ class Croner:
                 "memory_mb": memory_mb,
                 "active_dags": len(self.dags),
                 "active_threads": sum(1 for t in self.active_threads if t.is_alive()),
+                "queue_size": len(self.dag_queue),
+                "available_slots": self.available_slots._value,  # Текущее количество доступных слотов
             }
         )
 
@@ -183,7 +227,9 @@ class Croner:
 
         # Предупреждение при высоком использовании памяти
         if memory_mb > 500:  # 500 MB
-            print(f"⚠️  ВНИМАНИЕ: Высокое использование памяти: {memory_mb:.2f} MB")
+            logger.warning(
+                f"⚠️  ВНИМАНИЕ: Высокое использование памяти: {memory_mb:.2f} MB"
+            )
 
         return memory_mb
 
@@ -210,6 +256,7 @@ class Croner:
             print(
                 f"Активных потоков: {sum(1 for t in self.active_threads if t.is_alive())}"
             )
+            print(f"DAG в очереди: {len(self.dag_queue)}")
 
             self.last_cleanup = current_time
 
@@ -230,11 +277,16 @@ class Croner:
         scheduler_thread = threading.Thread(target=scheduler_loop, daemon=True)
         scheduler_thread.start()
         print(f"Планировщик запущен. Сканирование каждые {scan_interval} секунд")
+        print(f"Максимум параллельных DAG: {self.max_concurrent_dags}")
 
     def stop_scheduler(self):
         """Останавливает планировщик и очищает ресурсы"""
         self.running = False
         print("Останавливаем планировщик...")
+
+        # Очищаем очередь
+        with self.queue_lock:
+            self.dag_queue.clear()
 
         # Ждем завершения активных потоков (максимум 30 секунд)
         timeout = 30
@@ -264,5 +316,17 @@ class Croner:
         return (
             f"Память: {current['memory_mb']:.2f} MB, "
             f"DAG: {current['active_dags']}, "
-            f"Потоки: {current['active_threads']}"
+            f"Потоки: {current['active_threads']}, "
+            f"Очередь: {current['queue_size']}"
         )
+
+    def get_queue_status(self):
+        """Возвращает статус очереди"""
+        with self.queue_lock:
+            queue_dags = [dag_id for dag_id, _ in self.dag_queue]
+            return {
+                "queue_size": len(self.dag_queue),
+                "queued_dags": queue_dags,
+                "available_slots": self.available_slots._value,
+                "max_concurrent": self.max_concurrent_dags,
+            }

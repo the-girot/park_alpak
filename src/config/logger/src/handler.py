@@ -1,14 +1,22 @@
-# postgres_logger.py
 import json
 import threading
 import time
 import traceback
-from datetime import datetime
+from datetime import datetime, date
 from typing import Any, Dict, List, Optional
 
 import psycopg2
 
 from .schema import LogLevel, LogRecord, PostgresLoggerConfig
+
+
+class JSONEncoder(json.JSONEncoder):
+    """Кастомный JSON encoder для обработки datetime объектов"""
+
+    def default(self, obj):
+        if isinstance(obj, (datetime, date)):
+            return obj.isoformat()
+        return super().default(obj)
 
 
 class ErrorFileHandler:
@@ -81,7 +89,14 @@ class ErrorFileHandler:
                 log_entry = f"{timestamp} - postgres_logger - ERROR - {message}"
 
                 if context:
-                    log_entry += f" | Context: {context}"
+                    # Сериализуем контекст с помощью кастомного encoder
+                    try:
+                        context_str = json.dumps(
+                            context, cls=JSONEncoder, ensure_ascii=False
+                        )
+                        log_entry += f" | Context: {context_str}"
+                    except Exception as json_error:
+                        log_entry += f" | Context serialization error: {json_error}"
 
                 if exc_info:
                     exc_text = "".join(
@@ -114,6 +129,7 @@ class PostgresHandler:
         self._buffer: List[Dict[str, Any]] = []
         self._lock = threading.Lock()
         self._closed = False
+        self.json_encoder = JSONEncoder()  # Создаем экземпляр encoder
 
         # Запускаем фоновый поток для периодической записи
         self._flush_thread = threading.Thread(
@@ -187,20 +203,47 @@ class PostgresHandler:
 
     def _format_record(self, record: LogRecord) -> Dict[str, Any]:
         """Форматирование записи лога для базы данных"""
-        return {
-            "timestamp": record.timestamp,
-            "level": str(record.level),
-            "logger_name": record.name,
-            "message": record.message,
-            "module": record.module,
-            "function_name": record.function_name,
-            "line_number": record.line_number,
-            "process_id": record.process_id,
-            "thread_id": record.thread_id,
-            "thread_name": record.thread_name,
-            "exc_info": record.exc_info,
-            "extra_data": json.dumps(record.extra_data) if record.extra_data else None,
-        }
+        try:
+            # Сериализуем extra_data с помощью кастомного encoder
+            extra_data_json = None
+            if record.extra_data:
+                extra_data_json = self.json_encoder.encode(record.extra_data)
+
+            return {
+                "timestamp": record.timestamp,
+                "level": str(record.level),
+                "logger_name": record.name,
+                "message": record.message,
+                "module": record.module,
+                "function_name": record.function_name,
+                "line_number": record.line_number,
+                "process_id": record.process_id,
+                "thread_id": record.thread_id,
+                "thread_name": record.thread_name,
+                "exc_info": record.exc_info,
+                "extra_data": extra_data_json,
+            }
+        except Exception as e:
+            self.error_handler.log_error(
+                "Ошибка при форматировании записи лога",
+                exc_info=e,
+                context={"record": str(record.__dict__)},
+            )
+            # Возвращаем базовую структуру без extra_data в случае ошибки
+            return {
+                "timestamp": record.timestamp,
+                "level": str(record.level),
+                "logger_name": record.name,
+                "message": record.message,
+                "module": record.module,
+                "function_name": record.function_name,
+                "line_number": record.line_number,
+                "process_id": record.process_id,
+                "thread_id": record.thread_id,
+                "thread_name": record.thread_name,
+                "exc_info": record.exc_info,
+                "extra_data": None,
+            }
 
     def emit(self, record: LogRecord):
         """Добавление записи в буфер для последующей записи"""
@@ -303,7 +346,6 @@ class Logger:
         self.name = name
         self.handler = handler
         self.extra_data: Dict[str, Any] = {}
-
 
     def _get_caller_info(self):
         """Получение информации о вызывающем коде"""

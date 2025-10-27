@@ -1,6 +1,8 @@
 import re
 from datetime import datetime, timedelta
 
+from src.config import logger
+
 from .cron_parser import CronParser
 
 
@@ -18,9 +20,9 @@ class DAG:
                 self.cron_schedule = CronParser.parse(schedule_interval)
                 # Вычисляем первое следующее время при инициализации
                 self.next_run = self._calculate_next_run(datetime.now())
-                print(f"✅ DAG {dag_id} создан. Следующий запуск: {self.next_run}")
+                logger.info(f"✅ DAG {dag_id} создан. Следующий запуск: {self.next_run}")
             except Exception as e:
-                print(f"❌ Ошибка парсинга cron: {e}")
+                logger.critical("❌ Ошибка парсинга cron", exc_info=e)
 
     def _is_cron_string(self, schedule_str):
         """Проверяет, является ли строка cron-выражением"""
@@ -133,7 +135,7 @@ class DAG:
     def run(self):
         """Запуск всех задач DAG с обновлением следующего времени"""
         current_time = datetime.now()
-        print(f"🚀 Запуск DAG: {self.dag_id} в {current_time}")
+        logger.info(f"🚀 Запуск DAG: {self.dag_id} в {current_time}", dag=self.dag_id)
 
         # Обновляем время последнего запуска
         self.last_run = current_time
@@ -142,11 +144,18 @@ class DAG:
         if self.cron_schedule:
             old_next_run = self.next_run
             self.next_run = self._calculate_next_run(current_time)
-            print(
-                f"📅 Следующий запуск DAG {self.dag_id}: {self.next_run} (было: {old_next_run})"
+            logger.info(
+                f"📅 Следующий запуск DAG {self.dag_id}: {self.next_run} (было: {old_next_run})",
+                dag=self.dag_id,
+                next_run=self.next_run,
+                old_next_run=old_next_run,
             )
         elif self.schedule_interval in ["daily", "hourly"]:
-            print(f"📅 Следующий запуск DAG {self.dag_id}: {self.next_run}")
+            logger.info(
+                f"📅 Следующий запуск DAG {self.dag_id}: {self.next_run}",
+                dag=self.dag_id,
+                next_run=self.next_run,
+            )
 
         # Выполняем задачи
         success_count = 0
@@ -158,20 +167,20 @@ class DAG:
                 result = task()
                 execution_time = (datetime.now() - start_time).total_seconds()
 
-                print(
+                logger.info(
                     f"✅ Задача {task.__name__} выполнена успешно за {execution_time:.2f}с"
                 )
                 if result is not None:
-                    print(f"📊 Результат: {result}")
+                    logger.info(f"📊 Результат: {result}")
                 success_count += 1
 
             except Exception as e:
-                print(f"❌ Ошибка в задаче {task.__name__}: {e}")
+                logger.error(f"❌ Ошибка в задаче {task.__name__}", exc_info=e)
                 error_count += 1
 
         # Итоги выполнения
         status = "✅ УСПЕШНО" if error_count == 0 else "⚠️  С ОШИБКАМИ"
-        print(
+        logger.info(
             f"🎯 DAG {self.dag_id} завершен {status}. "
             f"Задачи: {success_count}✅ {error_count}❌"
         )
