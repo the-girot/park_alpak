@@ -191,7 +191,7 @@ class Croner:
             if dag.should_run(current_time):
                 # Пытаемся запустить сразу если есть свободные слоты
                 if self.available_slots.acquire(blocking=False):
-                    logger.info(f"Немедленный запуск DAG: {dag_id}")
+                    logger.warning(f"Немедленный запуск DAG: {dag_id}")
                     thread = threading.Thread(
                         target=self.run_dag_in_thread, args=(dag_id, dag), daemon=True
                     )
@@ -199,7 +199,7 @@ class Croner:
                     thread.start()
                 else:
                     # Если нет свободных слотов, добавляем в очередь
-                    logger.info(
+                    logger.warning(
                         f"Свободных слотов нет, добавляем DAG {dag_id} в очередь"
                     )
                     self.add_dag_to_queue(dag_id, dag)
