@@ -59,7 +59,9 @@ def load_data():
 
             # Конвертируем DataFrame в список словарей
             data = df.to_dict("records")
-            logger.debug(f"Всего записей в файле {len(data)}", file=file, len_=len(file))
+            logger.debug(
+                f"Всего записей в файле {len(data)}", file=file, len_=len(file)
+            )
 
             # Создаем метаданные и таблицу
             metadata = MetaData()
@@ -72,7 +74,11 @@ def load_data():
             # Выполняем запрос
             with engine.begin() as connection:
                 result = connection.execute(stmt)
-                logger.info(f"Успешно вставлено {result.rowcount} записей", insert_rows=result.rowcount)
+                logger.info(
+                    f"Успешно вставлено {result.rowcount} записей",
+                    insert_rows=result.rowcount,
+                )
+
 
             logger.info("Файл обработан", file=file)
             time.sleep(1)
