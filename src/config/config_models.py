@@ -20,3 +20,4 @@ class DbConfig(BaseModel):
 class Config(BaseModel):
     db_config: DbConfig
     logger_config: PostgresLoggerConfig
+    API_KEY: str

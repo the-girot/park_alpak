@@ -13,7 +13,7 @@ from src.config import config, logger
 from src.croner import DAG
 
 # cron (каждую минуту с 9 до 18 по будням)
-add_ads_dag = DAG("add_ads_dag", schedule_interval="*/10 * * * *")
+add_ads_dag = DAG("add_ads_dag", schedule_interval="40 9-18 * * 1-5")
 
 cities_mapping = {
     "source_omsk/ads": "Omsk",

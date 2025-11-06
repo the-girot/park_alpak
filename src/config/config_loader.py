@@ -15,6 +15,7 @@ def get_config() -> Config:
     db_user: str = os.environ.get("DB_USER")
     db_pass: str = os.environ.get("DB_PASS")
     db_port: str = os.environ.get("DB_PORT")
+    API_KEY: str = os.environ.get("API_KEY")
 
     return Config(
         db_config=DbConfig(
@@ -35,4 +36,5 @@ def get_config() -> Config:
             max_error_log_size=5 * 1024 * 1024,  # 5MB
             error_log_backup_count=3,
         ),
+        API_KEY=API_KEY
     )
