@@ -1,111 +1,224 @@
-create table dds.sales as  
-WITH detailed_data AS (
-    -- Детальные данные по году, неделе, городу и value
-    SELECT 
-        year,
-        week,
+insert into dds.sales  
+WITH 
+prepared_data as (
+    select 
+        extract(year from r.дата) as year,
+        extract(week from r.дата) as week,
+        r.дата,
         c.name_en as city,
+        value,
         case
             when value is null then 'Без ответа'
             else value
         end as value_group,
-        ROUND(SUM(amount)) AS total_amount,
-        SUM(CASE WHEN item_category = 'Билеты' THEN r.qty ELSE 0 END) AS total_tickets,
-        SUM(an.qty) as total_ads_qty
-    FROM raw.receipts r
-    JOIN dds.cities c ON r.kkm = c.kkm_name 
-    JOIN public.dim_dates dd ON r.sale_date::date = dd.date::date
-    LEFT JOIN raw.ads_new_hash_new AS an 
+        r."Категория номенклатуры" as item_category,
+        r."Количество" as qty_tickets,
+        an.qty as qty_answers,
+        -- Добавляем идентификатор чека для группировки
+        CONCAT(r.дата::timestamp(0), '_', r.city) as check_id
+    from public.offline_sales r
+    JOIN dds.cities c ON r.city = c.name_en  
+    LEFT JOIN raw.ads AS an 
         ON c.name_ru::text = an.city::text 
-        AND r.sale_date::timestamp BETWEEN 
-            (an.date - INTERVAL '10 seconds') AND 
-            (an.date + INTERVAL '15 seconds')
-        AND r.item_category = 'Билеты'
-    WHERE kkm IS NOT NULL 
-    GROUP BY year, week, c.name_en, value
-    
-    UNION ALL
-    
-    -- Итого по value для каждого города и недели
-    SELECT 
+        AND an.date BETWEEN 
+            (r.дата) AND 
+            (r.дата + INTERVAL '8 seconds')
+        AND r."Категория номенклатуры" = 'Билеты'
+    where r."Категория номенклатуры" = 'Билеты' 
+),
+-- Группируем по чекам, чтобы один чек был одной записью
+unique_checks as (
+    select 
         year,
         week,
-        c.name_en as city,
-        '_Итого_' as value_group,
-        ROUND(SUM(amount)) AS total_amount,
-        SUM(CASE WHEN item_category = 'Билеты' THEN r.qty ELSE 0 END) AS total_tickets,
-        SUM(an.qty) as total_ads_qty
-    FROM raw.receipts r
-    JOIN dds.cities c ON r.kkm = c.kkm_name 
-    JOIN public.dim_dates dd ON r.sale_date::date = dd.date::date
-    LEFT JOIN raw.ads_new_hash_new AS an 
-        ON c.name_ru::text = an.city::text 
-        AND r.sale_date::timestamp BETWEEN 
-            (an.date - INTERVAL '10 seconds') AND 
-            (an.date + INTERVAL '15 seconds')
-        AND r.item_category = 'Билеты'
-    WHERE kkm IS NOT NULL 
-    GROUP BY year, week, c.name_en
-    
-    UNION ALL
-    
-    -- Итого по городам для каждого value и недели
-    SELECT 
+        city,
+        value_group,
+        SUM(qty_tickets) as qty_tickets,
+        -- Берем максимальное значение qty_answers для чека (или можно использовать MIN/AVG)
+        MAX(qty_answers) as qty_answers,
+        check_id
+    from prepared_data
+    group by 
         year,
         week,
-        'Итого' as city,
-        case
-            when value is null then 'Без ответа'
-            else value
-        end as value_group,
-        ROUND(SUM(amount)) AS total_amount,
-        SUM(CASE WHEN item_category = 'Билеты' THEN r.qty ELSE 0 END) AS total_tickets,
-        SUM(an.qty) as total_ads_qty
-    FROM raw.receipts r
-    JOIN dds.cities c ON r.kkm = c.kkm_name 
-    JOIN public.dim_dates dd ON r.sale_date::date = dd.date::date
-    LEFT JOIN raw.ads_new_hash_new AS an 
-        ON c.name_ru::text = an.city::text 
-        AND r.sale_date::timestamp BETWEEN 
-            (an.date - INTERVAL '10 seconds') AND 
-            (an.date + INTERVAL '15 seconds')
-        AND r.item_category = 'Билеты'
-    WHERE kkm IS NOT NULL 
-    GROUP BY year, week, value
-    
-    UNION ALL
-    
-    -- Общие итоги по неделям
-    SELECT 
-        year,
-        week,
-        'Итого' as city,
-        '_Итого_' as value_group,
-        ROUND(SUM(amount)) AS total_amount,
-        SUM(CASE WHEN item_category = 'Билеты' THEN r.qty ELSE 0 END) AS total_tickets,
-        SUM(an.qty) as total_ads_qty
-    FROM raw.receipts r
-    JOIN dds.cities c ON r.kkm = c.kkm_name 
-    JOIN public.dim_dates dd ON r.sale_date::date = dd.date::date
-    LEFT JOIN raw.ads_new_hash_new AS an 
-        ON c.name_ru::text = an.city::text 
-        AND r.sale_date::timestamp BETWEEN 
-            (an.date - INTERVAL '10 seconds') AND 
-            (an.date + INTERVAL '15 seconds')
-        AND r.item_category = 'Билеты'
-    WHERE kkm IS NOT NULL 
-    GROUP BY year, week
+        city,
+        value_group,
+        check_id
 )
-SELECT 
+select
+    year,
+    week,
+    'Итого' as city,
+    'Итого' as value_group,
+    sum(qty_tickets)  as total_tickets,
+    sum(qty_answers) as total_ads_qty
+from unique_checks
+group by 
+    year,
+    week
+
+union all
+
+select
     year,
     week,
     city,
     value_group,
-    total_amount,
-    total_tickets,
-    total_ads_qty
-FROM detailed_data
-WHERE year IS NOT NULL AND week IS NOT NULL
-ORDER BY year desc, week desc, 
-    CASE WHEN city = 'Итого' THEN 1 ELSE 0 END, city, 
-    CASE WHEN value_group = '_Итого_' THEN 1 ELSE 0 END, value_group;
+    sum(qty_tickets)  as total_tickets,
+    sum(qty_answers) as total_ads_qty
+from unique_checks
+group by 
+    year,
+    week,
+    city,
+    value_group
+    
+union all
+
+select
+    year,
+    week,
+    city,
+    'Итого' as value_group,
+    sum(qty_tickets),
+    sum(qty_answers)
+from unique_checks
+group by 
+    year,
+    week,
+    city
+    
+union all
+
+select
+    year,
+    week,
+    'Итого' as city,
+    value_group,
+    sum(qty_tickets) as total_tickets,
+    sum(qty_answers) as total_ads_qty
+from unique_checks
+group by 
+    year,
+    week,
+    value_group
+order by year desc, week desc, city desc, value_group desc
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+create table dds.sales_month as 
+WITH 
+prepared_data as (
+    select 
+        extract(year from r.дата) as year,
+        extract(month from r.дата) as month,
+        r.дата,
+        c.name_en as city,
+        value,
+        case
+            when value is null then 'Без ответа'
+            else value
+        end as value_group,
+        r."Категория номенклатуры" as item_category,
+        r."Количество" as qty_tickets,
+        an.qty as qty_answers,
+        -- Добавляем идентификатор чека для группировки
+        CONCAT(r.дата::timestamp(0), '_', r.city) as check_id
+    from public.offline_sales r
+    JOIN dds.cities c ON r.city = c.name_en  
+    LEFT JOIN raw.ads AS an 
+        ON c.name_ru::text = an.city::text 
+        AND an.date BETWEEN 
+            (r.дата) AND 
+            (r.дата + INTERVAL '8 seconds')
+        AND r."Категория номенклатуры" = 'Билеты'
+    where r."Категория номенклатуры" = 'Билеты' 
+),
+-- Группируем по чекам, чтобы один чек был одной записью
+unique_checks as (
+    select 
+        year,
+        month,
+        city,
+        value_group,
+        SUM(qty_tickets) as qty_tickets,
+        -- Берем максимальное значение qty_answers для чека (или можно использовать MIN/AVG)
+        MAX(qty_answers) as qty_answers,
+        check_id
+    from prepared_data
+    group by 
+        year,
+        month,
+        city,
+        value_group,
+        check_id
+)
+select
+    year,
+    month,
+    'Итого' as city,
+    'Итого' as value_group,
+    sum(qty_tickets)  as total_tickets,
+    sum(qty_answers) as total_ads_qty
+from unique_checks
+group by 
+    year,
+    month
+
+union all
+
+select
+    year,
+    month,
+    city,
+    value_group,
+    sum(qty_tickets)  as total_tickets,
+    sum(qty_answers) as total_ads_qty
+from unique_checks
+group by 
+    year,
+    month,
+    city,
+    value_group
+    
+union all
+
+select
+    year,
+    month,
+    city,
+    'Итого' as value_group,
+    sum(qty_tickets),
+    sum(qty_answers)
+from unique_checks
+group by 
+    year,
+    month,
+    city
+    
+union all
+
+select
+    year,
+    month,
+    'Итого' as city,
+    value_group,
+    sum(qty_tickets) as total_tickets,
+    sum(qty_answers) as total_ads_qty
+from unique_checks
+group by 
+    year,
+    month,
+    value_group
+order by year desc, month desc, city desc, value_group desc
