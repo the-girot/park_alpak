@@ -411,6 +411,7 @@ class Logger:
     def info(self, message: str, **kwargs):
         """Логирование на уровне INFO"""
         self._log(LogLevel.INFO, message, **kwargs)
+        print(message)
 
     def warning(self, message: str, **kwargs):
         """Логирование на уровне WARNING"""
@@ -419,6 +420,7 @@ class Logger:
     def error(self, message: str, exc_info: Optional[Exception] = None, **kwargs):
         """Логирование на уровне ERROR"""
         self._log(LogLevel.ERROR, message, exc_info, **kwargs)
+        print(message, exc_info)
 
     def critical(self, message: str, exc_info: Optional[Exception] = None, **kwargs):
         """Логирование на уровне CRITICAL"""
