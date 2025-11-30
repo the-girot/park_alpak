@@ -269,7 +269,7 @@ def transform_data(df, channel_name):
     return transformed_data
 
 
-@google_dag.task()
+@google_month_dag.task()
 def main():
     result_df = get_google_sheet_data()
     if result_df is not None:
@@ -287,8 +287,8 @@ def call_load_offline_sales():
 
         with engine.begin() as connection:
             # Вызываем хранимую процедуру
-            result = connection.execute(text("CALL dds.load_prepared_budgets();"))
-            logger.info("Успешно выполнена процедура dds.load_prepared_budgets()")
+            result = connection.execute(text("CALL dds.load_sales_month_data();"))
+            logger.info("Успешно выполнена процедура dds.load_sales_month_data();")
 
     except Exception as e:
-        logger.error("Ошибка при выполнении процедуры dds.load_prepared_budgets()", e)
+        logger.error("Ошибка при выполнении процедуры dds.load_sales_month_data();", e)
