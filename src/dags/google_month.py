@@ -269,7 +269,7 @@ def transform_data(df, channel_name):
     return transformed_data
 
 
-@google_month_dag.task()
+@google_month_dag.task
 def main():
     result_df = get_google_sheet_data()
     if result_df is not None:
