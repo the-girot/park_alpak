@@ -16,8 +16,31 @@ class DbConfig(BaseModel):
     def get_migrations_url(self) -> str:
         return self.get_url() + "?async_fallback=True"
 
+    def get_config(self):
+        return {
+            "host": self.db_host,
+            "database": self.db_name,
+            "user": self.db_user,
+            "password": self.db_pass,
+            "port": self.db_port,
+        }
+
+
+class DirConfig(BaseModel):
+    base_dir: str
+
+    def get_sales_dir(self):
+        return self.base_dir + "/sales_raw"
+
+    def get_adds_dir(self):
+        return self.base_dir + "/ads"
+
 
 class Config(BaseModel):
     db_config: DbConfig
     logger_config: PostgresLoggerConfig
+    dir_config: DirConfig
     API_KEY: str
+    TG_TOKEN: str
+    CHAT_ID: str
+    timepad_api: str

@@ -1,28 +1,35 @@
+# Каждые 10 секунд
 import hashlib
 
 import gspread
 import pandas as pd
 from google.oauth2.service_account import Credentials
-from sqlalchemy import MetaData, Table, create_engine
+from sqlalchemy import MetaData, Table, create_engine, text
 from sqlalchemy.dialects.postgresql import insert
 
-from src.config import config
+from src.config import config, logger
+from src.croner import DAG
 
 # Словарь для соответствия русских названий городов английским
 CITY_MAPPING = {
     "Москва": "Moscow",
-    "Санкт-Петербург": "Saint-Petersburg",
-    "Ростов-на-Дону": "Rostov-on-Don",
+    "Яхрома": "Moscow",
+    "Санкт-Петербург": "Saint_Petersburg",
+    "Ростов-на-Дону": "Rostov_On_Don",
     "Екатеринбург": "Ekaterinburg",
     "Казань": "Kazan",
     "Волгоград": "Volgograd",
-    "Эльбрус": "Elbrus",
+    "Эльбрус": "Elbrus_region",
     "Чегем": "Chegem",
     "Омск": "Omsk",
     "Воробьевы Горы": "Vorobyovy_Gory",
     "Тюмень": "Tumen",
     "Уфа": "Ufa",
+    "Саратов": "Saratov",
+    "Набережные Челны": "Nab_chelny",
 }
+
+google_dag = DAG("google_dag", schedule_interval="*/30 * * * *")
 
 
 def generate_id(channel, city, date_from):
@@ -86,13 +93,14 @@ def convert_to_numeric(value):
         return None
 
 
-def get_google_sheet_data(sheet_url):
+def get_google_sheet_data():
     """
     Получает данные из Google Sheets используя API и преобразует в нужный формат
     """
     # Настройка авторизации
     SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
     SERVICE_ACCOUNT_FILE = "cert.json"
+    sheet_url = "https://docs.google.com/spreadsheets/d/1orw8ZNfjvzofxnlzHlKQEuiKSUZlvtkDPHWeoIz5BTY/edit"
 
     try:
         # Авторизация
@@ -143,8 +151,6 @@ def get_google_sheet_data(sheet_url):
                     transformed_data = transform_data(df, channel_name)
                     all_transformed_data.extend(transformed_data)
 
-
-
             except Exception as e:
                 print(f"Ошибка при обработке листа {i}: {e}")
                 continue
@@ -168,15 +174,6 @@ def get_google_sheet_data(sheet_url):
             for i, (idx, row) in enumerate(final_df.head(10).iterrows()):
                 print(f"  {i + 1}. {row['city']}: {row['budget']}")
 
-            # Сохраняем в CSV
-            final_df.to_csv(
-                "transformed_budget_data_new.csv",
-                index=False,
-                encoding="utf-8",
-                sep=";",
-                float_format="%.2f",
-            )
-
             data = final_df.to_dict("records")
             # Создаем метаданные и таблицу
             metadata = MetaData()
@@ -184,8 +181,17 @@ def get_google_sheet_data(sheet_url):
             # print(data)
             # Создаем insert statement с обработкой конфликтов
             stmt = insert(table).values(data)
-            stmt = stmt.on_conflict_do_nothing(index_elements=["id"])
-
+            # stmt = stmt.on_conflict_do_update(index_elements=["id"])
+            stmt = stmt.on_conflict_do_update(
+                constraint="budgets_pkey",  # или укажите название первичного ключа
+                set_={
+                    "channel": stmt.excluded.channel,
+                    "dateFrom": stmt.excluded.dateFrom,
+                    "dateTo": stmt.excluded.dateTo,
+                    "city": stmt.excluded.city,
+                    "budget": stmt.excluded.budget,
+                },
+            )
             # Выполняем запрос
             with engine.begin() as connection:
                 result = connection.execute(stmt)
@@ -200,7 +206,7 @@ def get_google_sheet_data(sheet_url):
             return None
 
     except Exception as e:
-        print(f"Ошибка: {e}")
+        logger.error("Ошибка", exc_info=str(e))
         return None
 
 
@@ -254,13 +260,26 @@ def transform_data(df, channel_name):
     return transformed_data
 
 
-# Использование
-if __name__ == "__main__":
-    sheet_url = "https://docs.google.com/spreadsheets/d/1orw8ZNfjvzofxnlzHlKQEuiKSUZlvtkDPHWeoIz5BTY/edit"
-    result_df = get_google_sheet_data(sheet_url)
-
+@google_dag.task
+def main():
+    result_df = get_google_sheet_data()
     if result_df is not None:
-        print("\nДанные успешно преобразованы и сохранены!")
+        logger.info("\nДанные успешно преобразованы и сохранены!")
         print(f"Общее количество записей: {len(result_df)}")
     else:
-        print("Не удалось получить или преобразовать данные")
+        logger.error("Не удалось получить или преобразовать данные")
+
+
+@google_dag.task
+def call_load_offline_sales():
+    """Задача для вызова SQL процедуры загрузки оффлайн продаж"""
+    try:
+        engine = create_engine(config.db_config.get_url())
+
+        with engine.begin() as connection:
+            # Вызываем хранимую процедуру
+            result = connection.execute(text("CALL dds.load_prepared_budgets();"))
+            logger.info("Успешно выполнена процедура dds.load_prepared_budgets()")
+
+    except Exception as e:
+        logger.error("Ошибка при выполнении процедуры dds.load_prepared_budgets()", e)

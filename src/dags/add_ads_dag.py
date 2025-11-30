@@ -13,7 +13,7 @@ from src.config import config, logger
 from src.croner import DAG
 
 # cron (каждую минуту с 9 до 18 по будням)
-add_ads_dag = DAG("add_ads_dag", schedule_interval="*/10 * * * *")
+add_ads_dag = DAG("add_ads_dag", schedule_interval="*/3 * * * *")
 
 cities_mapping = {
     "source_omsk/ads": "Omsk",
@@ -39,11 +39,11 @@ def calculate_hash(row):
 def load_data():
     engine = create_engine(config.db_config.get_url())
     load_dttm = datetime.now()
-    files = [x for x in os.listdir("N:\\source_cherkessk\\ads") if "xlsx" in x]
+    files = [x for x in os.listdir(config.dir_config.get_adds_dir()) if "xlsx" in x]
     logger.info(f"Получено {len(files)} файлов")
     for file in files:
         try:
-            df = pd.read_excel(f"N:\\source_cherkessk\\ads\\{file}")
+            df = pd.read_excel(config.dir_config.get_adds_dir() + f"\\{file}")
             logger.debug(f"Читаем файл {file}", file=file)
             df = df[df["Период"].notna()]
             df = df.rename(
@@ -56,6 +56,7 @@ def load_data():
             )
             # df = df[df.groupby(df.columns[0]).cumcount() != 0]
             df["date"] = pd.to_datetime(df["date"], dayfirst=True)
+            df['file_name'] = file
 
             df["load_dttm"] = load_dttm
             df["id"] = df.apply(calculate_hash, axis=1)
@@ -68,9 +69,8 @@ def load_data():
             # Создаем метаданные и таблицу
             metadata = MetaData()
             table = Table(
-                "ads_new_hash_new", metadata, autoload_with=engine, schema="raw"
+                "ads", metadata, autoload_with=engine, schema="raw"
             )
-            print(data)
             # Создаем insert statement с обработкой конфликтов
             stmt = insert(table).values(data)
             stmt = stmt.on_conflict_do_nothing(index_elements=["id"])

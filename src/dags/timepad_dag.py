@@ -1,15 +1,22 @@
 import concurrent.futures
-import csv
 import hashlib
-import json
 import threading
 import time
 from datetime import datetime
 from typing import Any, Dict, List
 
-import psycopg2
 import requests
-from psycopg2.extras import execute_batch
+from sqlalchemy import MetaData, Table, create_engine, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+from src.config import config, logger
+from src.croner import DAG
+
+# Создаем DAG
+dag = DAG(
+    dag_id="timepad_sales_sync",
+    schedule_interval="* */2 * * *",  # Ежедневно в 2:00 утра
+)
 
 # Глобальные переменные для потокобезопасности
 thread_local = threading.local()
@@ -242,7 +249,10 @@ def process_single_event(event: Dict, headers: dict) -> Dict[str, Any]:
         }
 
     except Exception as e:
-        print(f"[{threading.current_thread().name}] Ошибка при обработке {city}: {e}")
+        logger.error(
+            message=f"[{threading.current_thread().name}] Ошибка при обработке {city}",
+            exc_info=str(e),
+        )
         return {
             "city": city,
             "event_id": event_id,
@@ -252,54 +262,17 @@ def process_single_event(event: Dict, headers: dict) -> Dict[str, Any]:
         }
 
 
-def save_to_csv(data: List[Dict], filename: str):
+def insert_simple_format(data_list):
     """
-    Сохраняет данные в CSV файл
+    Вставляет данные в упрощенном формате в БД с использованием SQLAlchemy
+    с обработкой конфликтов через on_conflict_do_update
     """
-    if not data:
-        print("Нет данных для сохранения")
-        return
-
-    fieldnames = [
-        "order_id",  # Уникальный ID заказа
-        "event_session_id",  # ID сессии события
-        "created_at",
-        "status_name",
-        "status_title",
-        "payment_amount",
-        "payment_discount",
-        "ticket_id",
-        "price_nominal",
-        "ticket_type_id",
-        "ticket_type_name",
-        "ticket_price",
-        "event_id",
-        "timepad_commission",
-        "acquiring_commission",
-    ]
-
-    with open(filename, "w", newline="", encoding="utf-8-sig") as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames, delimiter="\t")
-        writer.writeheader()
-        writer.writerows(data)
-
-    print(f"Данные сохранены в {filename}")
-
-
-
-def insert_simple_format(data_list, db_config):
-    """
-    Вставляет данные в упрощенном формате в БД
-    """
-    insert_query = """
-    INSERT INTO public.online_sales_simple 
-    (order_hash, order_id, event_session_id, created_at, status_name, status_title, payment_amount, 
-     payment_discount, ticket_id, price_nominal, ticket_type_id, ticket_type_name, 
-     ticket_price, event_id, timepad_commission, acquiring_commission)
-    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-    """  # Добавлен один %s для order_hash
+    # Создаем engine
+    engine = create_engine(config.db_config.get_url())
 
     records_to_insert = []
+
+    # Подготавливаем данные
     for data in data_list:
         hash_string = (
             f"{data['event_id']}"
@@ -309,66 +282,111 @@ def insert_simple_format(data_list, db_config):
             f"{data['ticket_id']}"
             f"{data['ticket_type_id']}"
         )
-        record = (
-            hashlib.sha256(hash_string.encode("utf-8")).hexdigest(),  # order_hash
-            data["order_id"],
-            data["event_session_id"],
-            data["created_at"],
-            data["status_name"],
-            data["status_title"],
-            data["payment_amount"],
-            data["payment_discount"],
-            data["ticket_id"],
-            data["price_nominal"],
-            data["ticket_type_id"],
-            data["ticket_type_name"],
-            data["ticket_price"],
-            data["event_id"],
-            data["timepad_commission"],
-            data["acquiring_commission"],
-        )
+        record = {
+            "order_hash": hashlib.sha256(hash_string.encode("utf-8")).hexdigest(),
+            "order_id": data["order_id"],
+            "event_session_id": data["event_session_id"],
+            "created_at": data["created_at"],
+            "status_name": data["status_name"],
+            "status_title": data["status_title"],
+            "payment_amount": data["payment_amount"],
+            "payment_discount": data["payment_discount"],
+            "ticket_id": data["ticket_id"],
+            "price_nominal": data["price_nominal"],
+            "ticket_type_id": data["ticket_type_id"],
+            "ticket_type_name": data["ticket_type_name"],
+            "ticket_price": data["ticket_price"],
+            "event_id": data["event_id"],
+            "timepad_commission": data["timepad_commission"],
+            "acquiring_commission": data["acquiring_commission"],
+        }
         records_to_insert.append(record)
 
-    conn = None
     try:
-        conn = psycopg2.connect(**db_config)
-        cursor = conn.cursor()
-        execute_batch(cursor, insert_query, records_to_insert)
-        conn.commit()
-        print(f"Успешно вставлено {len(records_to_insert)} записей в БД")
+        # Получаем метаданные и таблицу
+        metadata = MetaData()
+        table = Table(
+            "online_sales_simple", metadata, autoload_with=engine, schema="public"
+        )
+
+        # Определяем колонки для обновления при конфликте
+        update_columns = {
+            "event_session_id": table.c.event_session_id,
+            "status_name": table.c.status_name,
+            "status_title": table.c.status_title,
+            "payment_amount": table.c.payment_amount,
+            "payment_discount": table.c.payment_discount,
+            "price_nominal": table.c.price_nominal,
+            "ticket_type_name": table.c.ticket_type_name,
+            "ticket_price": table.c.ticket_price,
+            "timepad_commission": table.c.timepad_commission,
+            "acquiring_commission": table.c.acquiring_commission,
+            "created_at": table.c.created_at,
+        }
+
+        # Создаем insert statement с обработкой конфликтов
+        stmt = pg_insert(table).values(records_to_insert)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["order_hash"],  # Уникальный индекс
+            set_=update_columns,
+        )
+
+        # Выполняем запрос
+        with engine.begin() as connection:
+            result = connection.execute(stmt)
+            logger.info(
+                f"Успешно обработано {result.rowcount} записей в БД (вставлено + обновлено)"
+            )
+            return result.rowcount
 
     except Exception as e:
         print(f"Ошибка при вставке данных в БД: {e}")
-        if conn:
-            conn.rollback()
+        raise
     finally:
-        if conn:
-            cursor.close()
-            conn.close()
+        engine.dispose()
 
-def main():
+
+def get_cities_from_db():
+    """Получение списка активных городов из базы данных"""
+    try:
+        engine = create_engine(config.db_config.get_url())
+
+        with engine.connect() as conn:
+            query = text("""
+                SELECT name_en, event_id 
+                FROM dds.cities 
+                WHERE is_active = true
+            """)
+
+            result = conn.execute(query)
+            cities = [{"city": row.name_en, "event_id": row.event_id} for row in result]
+
+        print(f"Получено {len(cities)} активных городов из базы данных")
+        return cities
+
+    except Exception as e:
+        print(f"Ошибка при получении городов из базы данных: {e}")
+        raise
+
+
+@dag.task
+def sync_timepad_sales():
+    """
+    Основная задача DAG для синхронизации продаж с TimePad
+    """
     # Конфигурация
+    headers = {
+        "Authorization": f"Bearer {config.timepad_api}",
+        "Accept": "application/json",
+    }
 
     # Список событий
-    events = [
-        {"city": "Ufa", "event_id": "3568845"},
-        {"city": "Tumen", "event_id": "3581805"},
-        {"city": "Volgograd", "event_id": "3172355"},
-        {"city": "Rostov_On_Don", "event_id": "3252357"},
-        {"city": "Ekaterinburg", "event_id": "3252401"},
-        {"city": "Kazan", "event_id": "3252418"},
-        {"city": "Moscow", "event_id": "3161245"},
-        {"city": "Saint_Petersburg", "event_id": "3124166"},
-        {"city": "Chegem", "event_id": "2986996"},
-        {"city": "Elbrus_region", "event_id": "2987963"},
-        {"city": "Omsk", "event_id": "3344106"},
-        {"city": "Vorobyovy_Gory", "event_id": "3391090"},
-    ]
+    events = get_cities_from_db()
 
     all_export_data = []
     results = []
 
-    print(f"Начинаем параллельную обработку {len(events)} событий...")
+    logger.info(f"Начинаем параллельную обработку {len(events)} событий...")
 
     # Обрабатываем события параллельно
     max_workers = min(11, len(events))
@@ -389,11 +407,11 @@ def main():
 
                 if result["status"] == "success":
                     all_export_data.extend(result["data"])
-                    print(
+                    logger.info(
                         f"✓ Успешно обработан {result['city']}: {result['orders_count']} заказов, {result['tickets_count']} позиций"
                     )
                 else:
-                    print(
+                    logger.critical(
                         f"✗ Ошибка в {result['city']}: {result.get('error', 'Unknown error')}"
                     )
 
@@ -407,38 +425,22 @@ def main():
         # Сортируем по дате создания
         all_export_data.sort(key=lambda x: x["created_at"])
 
-        # Сохраняем в CSV
-        save_to_csv(all_export_data, "timepad_export_all_cities.csv")
-
-        # Сохраняем в JSON для проверки
-        with open("timepad_export_all_cities.json", "w", encoding="utf-8") as f:
-            json.dump(all_export_data, f, indent=2, ensure_ascii=False, default=str)
-
-        # Сохраняем отчет по результатам
-        with open("processing_results.json", "w", encoding="utf-8") as f:
-            json.dump(results, f, indent=2, ensure_ascii=False, default=str)
-
         # Вставляем в БД
-        insert_simple_format(all_export_data, DB_CONFIG)
+        processed_count = insert_simple_format(all_export_data)
 
-        # Выводим статистику по статусам
-        successful_cities = [r for r in results if r["status"] == "success"]
-        failed_cities = [r for r in results if r["status"] == "error"]
-
-        print("\n=== ОБЩАЯ СТАТИСТИКА ===")
-        print(f"Успешно обработано: {len(successful_cities)} городов")
-        print(f"С ошибками: {len(failed_cities)} городов")
-
-        if failed_cities:
-            print("\nГорода с ошибками:")
-            for failed in failed_cities:
-                print(f"  - {failed['city']}: {failed.get('error', 'Unknown error')}")
+        return {
+            "status": "success",
+            "processed_events": len([r for r in results if r["status"] == "success"]),
+            "failed_events": len([r for r in results if r["status"] == "error"]),
+            "total_records": len(all_export_data),
+            "db_processed": processed_count,
+        }
     else:
         print("Нет данных для сохранения")
-
-
-if __name__ == "__main__":
-    start_time = time.time()
-    main()
-    end_time = time.time()
-    print(f"\nОбщее время выполнения: {(end_time - start_time):.2f} секунд")
+        return {
+            "status": "success",
+            "processed_events": 0,
+            "failed_events": len(events),
+            "total_records": 0,
+            "db_processed": 0,
+        }
