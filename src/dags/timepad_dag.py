@@ -15,7 +15,7 @@ from src.croner import DAG
 # Создаем DAG
 dag = DAG(
     dag_id="timepad_sales_sync",
-    schedule_interval="* */2 * * *",  # Ежедневно в 2:00 утра
+    schedule_interval="*/60 * * * *",  # Ежедневно в 2:00 утра
 )
 
 # Глобальные переменные для потокобезопасности
