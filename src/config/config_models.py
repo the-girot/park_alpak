@@ -30,10 +30,10 @@ class DirConfig(BaseModel):
     base_dir: str
 
     def get_sales_dir(self):
-        return self.base_dir + "/sales_raw"
+        return '/' + self.base_dir + "/sales_raw"
 
     def get_adds_dir(self):
-        return self.base_dir + "/ads"
+        return '/' + self.base_dir + "/ads"
 
 
 class Config(BaseModel):
