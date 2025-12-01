@@ -9,7 +9,7 @@ from src.config import config
 from src.croner import DAG
 
 # cron (каждую минуту с 9 до 18 по будням)
-bot_week_dag = DAG("bot_week_dag", schedule_interval="10 14 * * 1")
+bot_week_dag = DAG("bot_week_dag", schedule_interval="10 14 * * 0")
 
 
 # Настройки подключения к PostgreSQL
