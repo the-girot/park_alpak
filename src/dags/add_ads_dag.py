@@ -43,7 +43,7 @@ def load_data():
     logger.info(f"Получено {len(files)} файлов")
     for file in files:
         try:
-            df = pd.read_excel(config.dir_config.get_adds_dir() + f"\\{file}")
+            df = pd.read_excel(os.path.normpath(config.dir_config.get_adds_dir() + f"/{file}"))
             logger.debug(f"Читаем файл {file}", file=file)
             df = df[df["Период"].notna()]
             df = df.rename(
