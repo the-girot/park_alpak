@@ -15,7 +15,7 @@ from src.croner import DAG
 # Создаем DAG
 dag = DAG(
     dag_id="timepad_sales_sync",
-    schedule_interval="*/60 * * * *",  # Ежедневно в 2:00 утра
+    schedule_interval="*/59 * * * *",  # Ежедневно в 2:00 утра
 )
 
 # Глобальные переменные для потокобезопасности
@@ -406,7 +406,7 @@ def sync_timepad_sales():
                 results.append(result)
 
                 if result["status"] == "success":
-                    all_export_data.extend(result["data"])
+                    insert_simple_format(result["data"])
                     logger.info(
                         f"✓ Успешно обработан {result['city']}: {result['orders_count']} заказов, {result['tickets_count']} позиций"
                     )
@@ -419,28 +419,3 @@ def sync_timepad_sales():
                 print(f"✗ Таймаут при обработке {event['city']}")
             except Exception as e:
                 print(f"✗ Неожиданная ошибка при обработке {event['city']}: {e}")
-
-    # Сохраняем результаты
-    if all_export_data:
-        # Сортируем по дате создания
-        all_export_data.sort(key=lambda x: x["created_at"])
-
-        # Вставляем в БД
-        processed_count = insert_simple_format(all_export_data)
-
-        return {
-            "status": "success",
-            "processed_events": len([r for r in results if r["status"] == "success"]),
-            "failed_events": len([r for r in results if r["status"] == "error"]),
-            "total_records": len(all_export_data),
-            "db_processed": processed_count,
-        }
-    else:
-        print("Нет данных для сохранения")
-        return {
-            "status": "success",
-            "processed_events": 0,
-            "failed_events": len(events),
-            "total_records": 0,
-            "db_processed": 0,
-        }
