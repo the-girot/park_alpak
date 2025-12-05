@@ -9,6 +9,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from src.config import config, logger
 from src.croner import DAG
 
+
+
 # DAG для ежедневного обновления погодных данных
 weather_dag = DAG(
     "hourly_weather_data_update", schedule_interval="20 12 * * *"
