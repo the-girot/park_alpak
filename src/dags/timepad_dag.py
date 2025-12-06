@@ -40,9 +40,9 @@ def get_all_orders_for_event(event_id: str, headers: dict) -> List[Dict]:
     skip = 0
     limit = 250
 
-    print(
-        f"[{threading.current_thread().name}] Загружаем заказы для события {event_id}..."
-    )
+    # print(
+    #     f"[{threading.current_thread().name}] Загружаем заказы для события {event_id}..."
+    # )
 
     while True:
         url = f"https://api.timepad.ru/v1/events/{event_id}/orders?skip={skip}&limit={limit}"
@@ -63,9 +63,9 @@ def get_all_orders_for_event(event_id: str, headers: dict) -> List[Dict]:
                 break
 
             all_orders.extend(orders)
-            print(
-                f"[{threading.current_thread().name}] Загружено {len(orders)} заказов (всего: {len(all_orders)})"
-            )
+            # print(
+            #     f"[{threading.current_thread().name}] Загружено {len(orders)} заказов (всего: {len(all_orders)})"
+            # )
 
             # Проверяем, есть ли еще заказы
             if len(orders) < limit:
@@ -235,9 +235,9 @@ def process_single_event(event: Dict, headers: dict) -> Dict[str, Any]:
         # Обрабатываем в упрощенном формате
         export_data = process_orders_simple(orders, event_id)
 
-        print(
-            f"[{threading.current_thread().name}] Завершена обработка {city}: {len(export_data)} позиций"
-        )
+        # print(
+        #     f"[{threading.current_thread().name}] Завершена обработка {city}: {len(export_data)} позиций"
+        # )
 
         return {
             "city": city,

@@ -13,7 +13,7 @@ from src.croner import DAG
 
 # DAG для ежедневного обновления погодных данных
 weather_dag = DAG(
-    "hourly_weather_data_update", schedule_interval="20 12 * * *"
+    "hourly_weather_data_update", schedule_interval="*/5 * * * *"
 )  # Каждые 3 минуты
 
 
@@ -63,7 +63,7 @@ def get_weather_data(cities):
             params = {
                 "lat": lat,
                 "lon": lon,
-                "apikey": config.API_KEY,
+                "apikey": "3pdJaYLXCy5QTkZ7",
                 "forecast_days": 1,
             }
 

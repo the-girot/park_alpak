@@ -112,9 +112,9 @@ def get_google_sheet_data():
         sheet = client.open_by_url(sheet_url)
         sheets = []
         worksheets = sheet.worksheets()
-        print("Доступные листы:")
+        # print("Доступные листы:")
         for ws in worksheets:
-            print(f"- {ws.title} (id: {ws.id})")
+            # print(f"- {ws.title} (id: {ws.id})")
             sheets.append(ws.id)
 
         all_transformed_data = []
@@ -137,8 +137,8 @@ def get_google_sheet_data():
                 df = pd.DataFrame(rows, columns=headers)
 
                 print(f"\nЛист {i}: получено {len(df)} строк")
-                print("Пример сырых данных:")
-                print(df.head(2))
+                # print("Пример сырых данных:")
+                # print(df.head(2))
 
                 # Определяем название канала из первой строки
                 if not df.empty:
@@ -167,11 +167,11 @@ def get_google_sheet_data():
             else:
                 print(f"⚠ Внимание: есть дубликаты ID ({unique_ids}/{total_records})")
 
-            # Проверяем данные
-            print(f"\nТип данных в колонке budget: {final_df['budget'].dtype}")
-            print("Примеры значений budget:")
-            for i, (idx, row) in enumerate(final_df.head(10).iterrows()):
-                print(f"  {i + 1}. {row['city']}: {row['budget']}")
+            # # Проверяем данные
+            # print(f"\nТип данных в колонке budget: {final_df['budget'].dtype}")
+            # print("Примеры значений budget:")
+            # for i, (idx, row) in enumerate(final_df.head(10).iterrows()):
+            #     print(f"  {i + 1}. {row['city']}: {row['budget']}")
 
 
             data = final_df.to_dict("records")

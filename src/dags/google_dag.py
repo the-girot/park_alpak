@@ -86,7 +86,7 @@ def convert_to_numeric(value):
 
     try:
         result = float(value_str)
-        print(f"Преобразовано: '{original_value}' -> {result}")
+        # print(f"Преобразовано: '{original_value}' -> {result}")
         return result
     except (ValueError, TypeError) as e:
         print(f"Ошибка преобразования: '{original_value}' -> '{value_str}': {e}")
@@ -113,9 +113,9 @@ def get_google_sheet_data():
         sheet = client.open_by_url(sheet_url)
         sheets = []
         worksheets = sheet.worksheets()
-        print("Доступные листы:")
+        # print("Доступные листы:")
         for ws in worksheets:
-            print(f"- {ws.title} (id: {ws.id})")
+            # print(f"- {ws.title} (id: {ws.id})")
             sheets.append(ws.id)
 
         all_transformed_data = []
@@ -138,8 +138,8 @@ def get_google_sheet_data():
                 df = pd.DataFrame(rows, columns=headers)
 
                 print(f"\nЛист {i}: получено {len(df)} строк")
-                print("Пример сырых данных:")
-                print(df.head(2))
+                # print("Пример сырых данных:")
+                # print(df.head(2))
 
                 # Определяем название канала из первой строки
                 if not df.empty:
