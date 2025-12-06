@@ -13,7 +13,7 @@ from src.croner import DAG
 
 # DAG для ежедневного обновления погодных данных
 weather_dag = DAG(
-    "hourly_weather_data_update", schedule_interval="*/5 * * * *"
+    "hourly_weather_data_update", schedule_interval="10 13 * * *"
 )  # Каждые 3 минуты
 
 
