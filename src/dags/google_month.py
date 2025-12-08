@@ -278,6 +278,20 @@ def main():
     else:
         print("Не удалось получить или преобразовать данные")
 
+@google_month_dag.task
+def call_load_offline_sales():
+    """Задача для вызова SQL процедуры загрузки оффлайн продаж"""
+    try:
+        engine = create_engine(config.db_config.get_url())
+
+        with engine.begin() as connection:
+            # Вызываем хранимую процедуру
+            result = connection.execute(text("call dds.load_prepared_budgets_month();"))
+            logger.info("Успешно выполнена процедура dds.load_prepared_budgets()")
+
+    except Exception as e:
+        logger.error("Ошибка при выполнении процедуры dds.load_prepared_budgets_month()", e)
+
 
 @google_month_dag.task
 def call_load_offline_sales():
@@ -292,3 +306,5 @@ def call_load_offline_sales():
 
     except Exception as e:
         logger.error("Ошибка при выполнении процедуры dds.load_sales_month_data();", e)
+
+
