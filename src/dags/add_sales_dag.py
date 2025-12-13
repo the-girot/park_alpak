@@ -12,7 +12,7 @@ from src.config import config, logger
 from src.croner import DAG
 
 # cron (каждую минуту с 9 до 18 по будням)
-add_sales_dag = DAG("add_sales_dag", schedule_interval="*/10 * * * *")
+add_sales_dag = DAG("add_sales_dag", schedule_interval="*/59 * * * *")
 
 
 def calculate_hash(row):
