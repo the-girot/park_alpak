@@ -11,7 +11,7 @@ from src.croner import DAG
 from src.config import config
 
 # cron (каждую минуту с 9 до 18 по будням)
-bot_dag = DAG("bot_dag", schedule_interval="10 14 * * *")
+bot_dag = DAG("bot_dag", schedule_interval="10 12 * * *")
 
 
 # Настройки подключения к PostgreSQL

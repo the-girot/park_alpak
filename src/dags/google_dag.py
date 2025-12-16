@@ -29,7 +29,7 @@ CITY_MAPPING = {
     "Набережные Челны": "Nab_chelny",
 }
 
-google_dag = DAG("google_dag", schedule_interval="*/30 * * * *")
+google_dag = DAG("google_dag", schedule_interval="*/40 * * * *")
 
 
 def generate_id(channel, city, date_from):
