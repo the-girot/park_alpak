@@ -40,9 +40,9 @@ def get_all_orders_for_event(event_id: str, headers: dict) -> List[Dict]:
     skip = 0
     limit = 250
 
-    # print(
-    #     f"[{threading.current_thread().name}] Загружаем заказы для события {event_id}..."
-    # )
+    print(
+        f"Загружаем заказы для события {event_id}..."
+    )
 
     while True:
         url = f"https://api.timepad.ru/v1/events/{event_id}/orders?skip={skip}&limit={limit}"
@@ -52,7 +52,7 @@ def get_all_orders_for_event(event_id: str, headers: dict) -> List[Dict]:
 
             if response.status_code != 200:
                 print(
-                    f"[{threading.current_thread().name}] Ошибка {response.status_code} для события {event_id}, пропуск {skip}"
+                    f"Ошибка {response.status_code} для события {event_id}, пропуск {skip}"
                 )
                 break
 
@@ -63,9 +63,9 @@ def get_all_orders_for_event(event_id: str, headers: dict) -> List[Dict]:
                 break
 
             all_orders.extend(orders)
-            # print(
-            #     f"[{threading.current_thread().name}] Загружено {len(orders)} заказов (всего: {len(all_orders)})"
-            # )
+            print(
+                f"Загружено {len(orders)} заказов (всего: {len(all_orders)})"
+            )
 
             # Проверяем, есть ли еще заказы
             if len(orders) < limit:
@@ -75,17 +75,17 @@ def get_all_orders_for_event(event_id: str, headers: dict) -> List[Dict]:
             time.sleep(0.1)  # Небольшая задержка чтобы не перегружать API
 
         except requests.exceptions.RequestException as e:
-            print(f"[{threading.current_thread().name}] Ошибка сети: {e}")
+            print(f"Ошибка сети: {e}")
             time.sleep(5)  # Пауза при ошибке сети
             continue
         except Exception as e:
             print(
-                f"[{threading.current_thread().name}] Ошибка при получении заказов: {e}"
+                f"Ошибка при получении заказов: {e}"
             )
             break
 
     print(
-        f"[{threading.current_thread().name}] Всего загружено {len(all_orders)} заказов для события {event_id}"
+        f"Всего загружено {len(all_orders)} заказов для события {event_id}"
     )
     return all_orders
 
@@ -225,7 +225,7 @@ def process_single_event(event: Dict, headers: dict) -> Dict[str, Any]:
     city = event["city"]
 
     print(
-        f"[{threading.current_thread().name}] Начата обработка {city} (ID: {event_id})"
+        f"Начата обработка {city} (ID: {event_id})"
     )
 
     try:
@@ -235,9 +235,9 @@ def process_single_event(event: Dict, headers: dict) -> Dict[str, Any]:
         # Обрабатываем в упрощенном формате
         export_data = process_orders_simple(orders, event_id)
 
-        # print(
-        #     f"[{threading.current_thread().name}] Завершена обработка {city}: {len(export_data)} позиций"
-        # )
+        print(
+            f"Завершена обработка {city}: {len(export_data)} позиций"
+        )
 
         return {
             "city": city,
@@ -250,7 +250,7 @@ def process_single_event(event: Dict, headers: dict) -> Dict[str, Any]:
 
     except Exception as e:
         logger.error(
-            message=f"[{threading.current_thread().name}] Ошибка при обработке {city}",
+            message=f"Ошибка при обработке {city}",
             exc_info=str(e),
         )
         return {
@@ -373,6 +373,7 @@ def get_cities_from_db():
 def sync_timepad_sales():
     """
     Основная задача DAG для синхронизации продаж с TimePad
+    Обрабатывает города последовательно с интервалом 30 минут
     """
     # Конфигурация
     headers = {
@@ -382,40 +383,64 @@ def sync_timepad_sales():
 
     # Список событий
     events = get_cities_from_db()
+    
+    if not events:
+        logger.info("Нет активных городов для обработки")
+        return
 
-    all_export_data = []
     results = []
+    total_cities = len(events)
+    
+    logger.info(f"Начинаем последовательную обработку {total_cities} событий с интервалом 30 минут...")
 
-    logger.info(f"Начинаем параллельную обработку {len(events)} событий...")
+    for i, event in enumerate(events, 1):
+        city = event["city"]
+        event_id = event["event_id"]
+        
+        logger.info(f"Обработка города {i}/{total_cities}: {city} (ID: {event_id})")
+        
+        try:
+            # Обрабатываем текущий город
+            result = process_single_event(event, headers)
+            results.append(result)
 
-    # Обрабатываем события параллельно
-    max_workers = min(11, len(events))
+            if result["status"] == "success":
+                # Вставляем данные в БД
+                inserted_count = insert_simple_format(result["data"])
+                logger.info(
+                    f"✓ Успешно обработан {city}: "
+                    f"{result['orders_count']} заказов, "
+                    f"{result['tickets_count']} позиций, "
+                    f"{inserted_count} записей в БД"
+                )
+            else:
+                logger.critical(
+                    f"✗ Ошибка в {city}: {result.get('error', 'Unknown error')}"
+                )
 
-    with concurrent.futures.ThreadPoolExecutor(
-        max_workers=max_workers, thread_name_prefix="CityWorker"
-    ) as executor:
-        future_to_event = {
-            executor.submit(process_single_event, event, headers): event
-            for event in events
-        }
+        except Exception as e:
+            logger.critical(f"✗ Неожиданная ошибка при обработке {city}: {e}")
+            results.append({
+                "city": city,
+                "event_id": event_id,
+                "status": "error",
+                "error": str(e)
+            })
 
-        for future in concurrent.futures.as_completed(future_to_event):
-            event = future_to_event[future]
-            try:
-                result = future.result(timeout=300)
-                results.append(result)
-
-                if result["status"] == "success":
-                    insert_simple_format(result["data"])
-                    logger.info(
-                        f"✓ Успешно обработан {result['city']}: {result['orders_count']} заказов, {result['tickets_count']} позиций"
-                    )
-                else:
-                    logger.critical(
-                        f"✗ Ошибка в {result['city']}: {result.get('error', 'Unknown error')}"
-                    )
-
-            except concurrent.futures.TimeoutError:
-                print(f"✗ Таймаут при обработке {event['city']}")
-            except Exception as e:
-                print(f"✗ Неожиданная ошибка при обработке {event['city']}: {e}")
+        # Добавляем паузу между городами, кроме последнего
+        if i < total_cities:
+            next_city = events[i]["city"]
+            logger.info(f"Ожидание 30 минут перед обработкой следующего города: {next_city}")
+            
+            # Ждем 30 минут (1800 секунд)
+            time.sleep(300)
+    
+    # Итоговая статистика
+    successful = sum(1 for r in results if r.get("status") == "success")
+    failed = total_cities - successful
+    
+    logger.info(f"Обработка завершена. Успешно: {successful}, Ошибок: {failed}")
+    
+    if failed > 0:
+        failed_cities = [r["city"] for r in results if r.get("status") != "success"]
+        logger.warning(f"Городы с ошибками: {', '.join(failed_cities)}")
