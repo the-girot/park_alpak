@@ -433,7 +433,7 @@ def sync_timepad_sales():
             logger.info(f"Ожидание 30 минут перед обработкой следующего города: {next_city}")
             
             # Ждем 30 минут (1800 секунд)
-            time.sleep(300)
+            #time.sleep(300)
     
     # Итоговая статистика
     successful = sum(1 for r in results if r.get("status") == "success")
